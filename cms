@@ -1,0 +1,470 @@
+#!/bin/bash
+#cms - Content Management Script
+#Marc Giannandrea
+#AC21009
+#Matric:---------------
+
+#Set variables to command line arguments
+cmd="$1"
+path="$2"
+userin="$3"
+
+#Use of && later in the program is to make sure half a command is not executed if for some reason one of the terminal commands fail
+
+
+#If the path field is empty then tell user unless it is the help command.
+if [ -z "$path" ] && [ ! "$cmd" = "-help" ];
+then
+    printf "No path declared as second argument. Please use -help for help. Exiting.\n";
+    exit 1; #Exit 1 used to indicate issue executing
+fi
+
+if [ ! "$cmd" = "-help" ];
+then #Prevents errors with realpath as -help will have no path
+    path="$(realpath $path)" #Used to turn users path into absolute e.g ./ to /home/etc/
+fi
+case "$cmd" in #Case statment based on what the command entered is
+    
+    "-adduser")
+    if [ -e "$path/repo.log" ];
+    then
+	source $path/repo.cfgs/group.cfg #Use source to import $gang variable from text file which declares linux group used for the repo
+	if id "$userin" >/dev/null 2>&1;
+	then #Check if user exists and redirect out to /dev/null so it is not displayed
+	    printf "User Exists in linux system. Adding to repo group for repo : $path . Sudo password might be required.\n"
+	    sudo usermod -a -G $group $userin && #Add user to group used for the repo. Conditional && only runs exit 0 if sucsess
+	    exit 0 #exit 0 indicates sucsess
+	else
+	    echo "user does not exist"
+	fi
+    else
+	printf "Cannot add user to a non repo path\n"
+    fi
+    exit 1
+    ;;
+    
+    "-removeuser")
+    if [ -e "$path/repo.log" ];
+    then
+	source $path/repo.cfgs/group.cfg #Use source to import $gang variable from text file which declares linux group used for the repo
+	if id "$userin" >/dev/null 2>&1;
+	then #Check if user exists and redirect out to /dev/null so it is not displayed
+						printf "User Exists in linux system. removing from repo group for : $path . Sudo password might be required.\n"
+	    sudo gpasswd -d $userin $group && #Remove user from group used for the repo. Conditional && only runs exit 0 if sucsess
+	    exit 0 #exit 0 indicates sucsess
+	else
+	    echo "User does not exist in linux"
+	fi
+    else
+	printf "Cannot remove user to a non repo path\n"
+    fi
+    exit 1
+    ;;
+    
+    "-createrepo")
+    printf "Please enter a group name that'll be used to control your repo through Linux's group permissions:\n"
+    read groupname #Get terminal input for name to be used for group
+    if [ ! -z "$(egrep -i "^$groupname" /etc/group)" ];
+    then #Find out if group already exists
+	printf "$groupname already exists. Please use a different name\n"
+    else
+	if [ ! -d $path ];
+	then #If path is directory
+	    (printf "Sudo password might be required for creation of repo linux group.\n" &&
+	    $(sudo groupadd $groupname) && #Add group
+	    mkdir "$path" &&
+	    touch $path/repo.log &&
+	    mkdir $path/repo.cfgs &&
+	    mkdir $path/archives && # Touch required files for repo
+	    echo "group=$groupname" > $path/repo.cfgs/group.cfg && #save the group variable to the text file for later refrencing
+	    printf "Repo created at $path\n" &&
+	    sudo chown -R $USER.$groupname $path && #Set file to repo group
+	    chmod -R 770 $path #Set RWX for user and group of all files in directory &&
+	    exit 0) ||
+	    (printf "Repo failed to create\n")
+	else
+	    #Code below does much the same as above however not creating a directory
+	    printf "Directory $path already exists. Do you wish to attempt to make this directory a repo?(Compatability issues may exist and repo could be corrupted without warning)(y/n)\n"
+	    read answer
+	    if [ $answer = "y" ];
+	    then
+		($(sudo groupadd "$groupname")&&
+		(echo "group=$groupname" > $path/repo.cfgs/group.cfg) &&
+		touch $path/repo.log &&
+		mkdir $path/repo.cfgs &&
+		mkdir $path/archives &&
+		printf "Sudo password might be required for creation of repo linux group.\n" &&
+		sudo chown -R $USER:$groupname $path &&
+		chmod -R 770 $path &&
+		printf "Repo created at already existing directory: $path\n") &&
+		exit 0 ||
+		(printf "Repo failed to create\n" && exit 1)
+	    elif [ $answer = "n" ];
+	    then
+		printf "Creation Canceled\n"
+	    else
+		printf "Invalid input. Creation Canceled\n"
+	    fi
+	fi
+    fi
+    exit 1
+    ;;
+    
+    "-removerepo")
+    if [ ! -e "$path/repo.log" ];
+    then
+	printf "Directory is not a valid repo (missing repo.log) at $path/repo.log or directory does not exist. Cannot delete\n";
+    else
+	printf "Are you sure you want to delete the repo with its contents?(y or n):\n"
+	read ans
+	if [ $ans = "y" ];
+	then
+	    source $path/repo.cfgs/group.cfg
+	    printf "Sudo password might be required for removal of repo linux group.\n"
+	    (sudo groupdel $group &&
+	    rm -rf "$path" && #Remove the repo recursively
+	    printf "Repo removed at $path\n")
+	    exit 0 ||
+	    (printf "Failed to remove Repo\n")
+	elif [ $ans = "n" ];
+	then
+	    printf "Delete Canceled\n"
+	else
+	    printf "Input invalid , Delete Canceled\n"
+	    exit 0
+	fi
+    fi
+    exit 1
+    ;;
+    
+    "-addfile")
+    if [  -e "$(dirname $path)/repo.log" ];
+    then
+	if [ ! -e "$path" ];
+	then
+	    dir=$(dirname $path) #Get directory file is in
+	    source $dir/repo.cfgs/group.cfg
+	    printf "Sudo password might be required for changing file permissions to repo group\n"
+	    touch $path && #Create file
+	    touch "$path.repo" && #Create .repo file used for indicating the file is in the repo
+	    cp "$path" "$path.prev" && #Create backup of file
+	    sudo chown $USER:$group $path $path.prev $path.repo &&
+	    chmod 770 $path $path.prev $path.repo &&
+	    printf "$path added to repo by $USER on : $(date)\n" >> "repo.log" && #Add file creation to log
+	    printf "status=in\n" > "$path.repo" && #Declare status in for later refrencing
+	    printf "usrc=$USER" >> "$path.repo" && #Set the user who added it
+	    printf "$path created and added to repo\n" &&
+	    exit 0
+	elif [ ! -e "$path.repo" ];
+	then
+	    #Code below is much the same as above however we are not creating files yet only changing an existing one to add to the repo
+	    dir=$(dirname "${path}")
+	    source $dir/repo.cfgs/group.cfg
+	    printf "Sudo password might be required for changing file permissions to repo group\n"
+	    touch "$path.repo" &&
+	    cp "$path" "$path.prev" &&
+	    sudo chown $USER:$group $path $path.prev $path.repo &&
+	    chmod 770 $path $path.prev $path.repo &&
+	    printf "$path added to repo by $USER on : $(date)\n" >> "repo.log" &&
+	    printf "status=in\n" > "$path.repo" &&
+	    printf "usrc=$USER" >> "$path.repo" &&
+	    printf "$path added to repo\n" &&
+	    exit 0
+	else
+	    printf "File is already added to repo\n"
+	    exit 1
+	fi
+    else
+	printf "Path is not in a valid repo. Unable to add\n"
+	exit 1
+    fi
+    ;;
+    
+    "-removefile")
+    if [ ! -e "$path" ] || [ ! -e "$path.repo" ];
+    then
+	printf "Cannot remove non-existing file from repo. Please make sure file is in same directory as repo.log and has been added to the repo\n"
+    else
+	source $path.repo
+	if [[ "$status" == "out" ]];
+	then #Check if file is checked out
+	    printf "File is currently checked out by $usrc. You have to wait for them to check in the file before removing it.\n"
+	else
+	    rm "$path.repo"
+	    rm "$path.prev"
+	    rm "$path.patch"
+	    printf "$path removed from repo by $USER on : $(date)\n" >> "repo.log" #Add removal to log
+	    printf "$path removed from repo\n"
+	    printf "Do you wish to delete the file aswell?(y/n):\n"
+	    read answer
+	    if [ $answer = "y" ];
+	    then
+		(rm "$path" && printf "File Deleted\n") || (printf "Error whilst deleting $path\n")
+		exit 0
+	    elif [ $answer = "n" ];
+	    then
+		printf "File removed but not deleted\n"
+		exit 0
+	    else
+		printf "Invalid input. Filed removed but not deleted\n"
+	    fi
+	fi
+    fi
+    exit 1
+    ;;
+    
+    "-checko")
+	if [ -e "$path" ] && [ -e "$path.repo" ];
+    then
+	source $path.repo
+	if [[ "$status" == "out" ]];
+	then
+	    printf "File is currently checked out by $usrc. You have to wait for them to check in the file before checking out.\n"
+	elif [[ "$status" == "in" ]];
+	then #Check if the file is checked in
+	    printf "status=out\n" > "$path.repo" #Set the file as checked out
+	    printf "usrc=$USER" >> "$path.repo" #Set the user who checked it out
+	    cp $path $path.prev && #Make a backup before hand
+	    dir=$(dirname "${path}") && #get the directory file is in
+	    source $dir/repo.cfgs/group.cfg && #Get group being used for repo
+	    printf "Sudo password might be required for changing file permissions to repo group\n" &&
+	    sudo chown $USER:$group $path.prev &&
+	    chmod 770 $path.prev &&
+	    printf "Checked out file: $path\n"
+	    printf "\n" >> repo.log
+	    printf "$USER checked out file: $path\n" >> repo.log
+	    chmod 740 $path #Make it read only for group so edits cannot take place from other users
+	    printf "Would you like to edit this file now?:(y/n)\n"
+	    read ans
+	    if [ $ans = "y" ];
+	    then
+		nano $path && exit 0 #open the file in nano editor
+	    elif [ $ans = "n" ];
+	    then
+		printf "n selected, editor will not open\n"
+		exit 0
+	    else
+		printf "Invalid input. Editor will not open\n"
+	    fi
+	else
+	    printf "Unknown state of checked in. Remove file from repo and re add\n"
+	    
+	fi
+    else
+	printf "Cannot checkout. $path or $path.repo file is missing or file is not added to the repo\n"
+    fi
+    exit 1
+    ;;
+    
+    "-checkin")
+	if [ -e "$path" ] && [ -e "$path.repo" ];
+    then
+	source $path.repo
+	if [[ "$status" == "out" ]];
+	then #check if file is checked out
+	    if [ "$usrc" = "$USER" ];
+	    then #check if the same user is checking it in
+		diff -c $path $path.prev > $path.patch #get the difference between the two files and add it to a patch file used when reverting it later on
+		printf "Sudo password might be required for changing file permissions to repo group\n" &&
+		dir=$(dirname "${path}") && #get the directory file is in
+		source $dir/repo.cfgs/group.cfg && #Get group being used for repo
+		sudo chown $USER:$group $path.patch &&
+		chmod 770 $path.patch &&
+		printf "\n" >> repo.log #Seperate next block of text in log with a new line
+		sdiff $path $path.prev >> repo.log #displays the difference of the two files side by side in the log
+		printf "$USER checked in and has modified $path , differences made above^\n" >> repo.log #Report check in to the log
+		printf "status=in\n" > "$path.repo"
+		printf "usrc=$USER" >> "$path.repo"
+		printf "Checked in file: $path \n"
+		chmod 770 $path #return permissions to normal
+		printf "Would you like to add a comment to your check in?(y/n):\n"
+		read ans
+		if [ $ans = "y" ];
+		then
+		    printf "Please enter your comment:\n"
+		    read com
+		    printf "Comment added to change: $com\n" >> repo.log
+		    exit 0
+		    
+		elif [ $ans = "n" ];
+		then
+		    printf "n selected, no comment added\n"
+		    exit 0
+		else
+		    printf "Invalid input. no comment will be added\n"
+		    exit 0
+		fi
+		
+	    else
+		printf "You were not the user that checked out the file. Please contact $usrc to check in their edits\n"
+	    fi
+	    
+	elif [[ "$status" == "in" ]];
+	then
+	    printf "File is currently already checked in. Cannot check in an already checked in file. \n"
+	else
+	    printf "Unknown state of checked in. Remove file from repo and re add\n"
+	    
+	fi
+    else
+	printf "Cannot checkout. $path or $path.repo file is missing or file is not added to the repo\n"
+    fi
+    exit 1
+    ;;
+    
+    "-revert")
+	if [ -e "$path" ] && [ -e "$path.repo" ];
+    then
+	if [ -e "$path.patch" ];
+	then #If a patch file exists
+	    source $path.repo
+	    dir=$(dirname "${path}") #get the directory file is in
+	    source $dir/repo.cfgs/group.cfg #Get group being used for repo
+	    if [[ "$status" == "out" ]];
+	    then
+		printf "Cannot revert a checked out file. Please check it in first.\n"
+	    elif [[ "$status" == "in" ]];
+	    then
+		patch -b < $path.patch && #Revert the last changes made through patch
+		printf "Patch applied and  has been reverted and backup of the reverted file has been created as $path.orig\n" &&
+		printf "$USER reverted the last change on file: $path\n" >> repo.log &&
+		printf "Sudo password might be required for changing file permissions to repo group\n" &&
+		sudo chown $USER:$groupname $path &&
+		chmod 770 $path &&
+		exit 0
+	    else
+		printf "Unknown state of checked in. Remove file from repo and re add\n"
+	    fi
+	else
+	    printf "$path.patch does not exist. Unable to revert"
+	fi
+    else
+	printf "Cannot revert. $path or $path.repo file is missing or file is not added to the repo\n"
+    fi
+    exit 1
+    ;;
+    
+    "-archive")
+    if [ -f "$path/repo.log" ];
+    then
+	if [ -d "$path" ];
+	then #Check if path is a directory
+	    printf "Sudo password might be required to change the archive's permission to the repo group\n"
+	    filename=$path/archives/$(date +"%Y-%m-%d-%H_%M_%S").tar
+	    tar --exclude=$path/archives -P -czf $filename $path && #Archive the repo excluding the archives folder within
+	    source $path/repo.cfgs/group.cfg &&
+	    sudo chown $USER:$group $filename && #Set group on the tar file
+	    chmod 770 $filename && #Set permissions on the tar file
+	    printf "Archive Succses!\n" &&
+	    exit 0
+	fi
+    else
+	printf "Cannot archive. Not a valid repo path\n"
+    fi
+    exit 1
+    ;;
+    
+    "-unpacktar")
+    if [ -e "$path/repo.log" ];
+    then
+	if [ -d "$path" ];
+	then
+	    #Use of heredoc to quickly send text to terminal
+		cat <<-EOF
+		    --------------------------
+		    Please select one of the following files to unpack
+		    and replace the current reposistory.
+		    It is suggested to archive the current version of
+		    the reposistory first before replacing it.
+		    --------------------------
+		EOF
+	    
+	    select opt in $path/archives/* "Cancel"; do #Add all files in the path as options for the menu
+		case $opt in
+		    *.tar)
+		    printf "Archive: $opt selected\n"
+		    movepath=$(dirname $path) #Used to move the archive folder temporarily above the repo to be deleted so the archive folder is not lost
+		    arcbase=$(basename $opt) #Get name of tar file that we are using
+		    mv $path/archives $movepath #Move the archive folder out of folder to be deleted
+		    rm  -r $path/* # Delete everything in the repo recursively
+		    tar -P -xvf $movepath/archives/$arcbase #Unpack the tar into the repo folder
+		    mv $movepath/archives $path #Move the archives folder back
+		    printf "Sudo password might be required to change the repo's permission to the repo group\n"
+		    source $path/repo.cfgs/group.cfg
+		    sudo chown -R $USER:$group $path && #Set group to repo group again
+		    chmod -R 770 $path && #Set all files to RWX for the repo's group and the user
+		    exit 0
+		    break
+		    ;;
+		    
+		    "Cancel")
+		    printf "Canceled\n"
+		    break
+		    ;;
+		    
+		    *)
+		    printf "This is not a valid choice\n"
+		    ;;
+		esac
+	    done
+	fi
+    else
+	printf "Cannot unpack. $path/repo.log file is missing suggesting this is not a valid repo path\n"
+    fi
+    exit 1
+    ;;
+
+    "-compilesource")
+    if [ -e "$path/repo.log" ];
+    then
+	if [ -d "$path" ];
+	then
+	    gcc $path/*.c -o compiledFiles && #Compile all c files in the repo and writes compiled program to compiledFiles
+	    exit 0
+	else
+	    printf "$path doesn't exist. Cannot compile	."
+	fi
+    else
+	printf "Cannot compile source. $path/repo.log is missing suggesting this is not a valid repo path\n"
+    fi
+    exit 1
+    ;;
+
+    "-help")
+	cat <<-EOF
+		--------------------------
+		Help for CMS Script
+		--------------------------
+
+		Notes:
+		1.The creation of a repository should always be done before using any other commands.
+		2.If patching fails replace file with file.prev (should be the file before the last made changes)
+		3.Do not manually modify any .cfg .repo .prev .patch files unless you know the consequences
+		4.Log of repo activity is stored at repo.log
+		5.User needs sudo access in order to use CMS | CMS will fail to operate correctly if not
+
+		Commands:
+		cms -adduser (path of repo folder) (Username of user to add) Add User to the repository in order to allow editing
+		cms -removeuser (path of repo folder) (Username of user to remove) Remove user from the repository
+		cms -createrepo (path of repo folder to be created) Create a repository at the given location
+		cms -removerepo (path of repo folder to be deleted) Remove a repository at the given location
+		cms -addfile    (path of file to be added to repo) Add file to a repository at the given location
+		cms -removefile (path of file to be removed from repo) Remove file to a repository at the given location
+		cms -checko	    (path of file to be checked out from repo) Check file out , allows user to edit only
+		cms -checkin    (path of file to be checked in from repo) Check file in, saves changes to repo.log
+		cms -revert	    (path of file to be reverted from last changes) Reverts file from last changes made to it
+		cms -archive    (path of repo folder to be archived) Archive the whole repo as of current
+		cms -unpacktar  (path of archived/tar file) Unpack a previous version of the repo and replace current with it(archives folder unchanged)
+		cms -compilesource	(path of repo folder) Compile all c files in the repo and outputs compiledFiles
+
+	EOF
+
+    exit 0
+    ;;
+
+    *)printf "Invalid command, please use cms -help for list of commands\n"
+    exit 1
+    ;;
+
+esac
+
