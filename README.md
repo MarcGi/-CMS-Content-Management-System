@@ -1,4 +1,4 @@
-# Content-Management-System
+# Version-Control-System
 Local CMS built in Bash for use on Linux Distributions
 
 Second Year Bash project at the University of Dundee
@@ -9,7 +9,7 @@ How to Use:
 
 
 --------------------------
-Help for CMS Script
+Help for VCS Script
 --------------------------
 
 Notes:  
